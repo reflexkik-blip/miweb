@@ -1,0 +1,242 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+
+// NatureRelax — Estética profunda v3
+// Objetivo: crear una experiencia de calma y belleza profunda.
+// Principios de diseño empleados:
+//  - Jerarquía tipográfica amplia y respirable
+//  - Capas visuales: fondo, medio, primer plano con parallax
+//  - Material translúcido (glassmorphism) y texturas sutiles
+//  - Ritmo: espacios amplios y micro-interacciones lentas
+//  - Accesibilidad: contrastes respetuosos, foco claro, controles grandes
+
+const styles = `
+:root{
+  --bg-1: #f7fbf9; --bg-2: #e9f6f2; --panel: rgba(255,255,255,0.72);
+  --muted: #3b5b50; --accent: #0f8a6f; --accent-2: #49b79e;
+  --glass-border: 1px solid rgba(255,255,255,0.6);
+  --radius: 20px; --soft-shadow: 0 18px 50px rgba(7,20,15,0.06);
+  --glass-strong: rgba(255,255,255,0.85);
+}
+*{box-sizing:border-box}
+html,body,#root{height:100%}
+body{margin:0;font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; background: radial-gradient(1200px 600px at 10% 10%, rgba(73,183,160,0.06), transparent), linear-gradient(180deg,var(--bg-1),var(--bg-2)); color:var(--muted);}
+.app{min-height:100vh;padding:48px 20px;display:flex;align-items:flex-start;justify-content:center}
+.shell{width:100%;max-width:1200px}
+.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:26px}
+.brand{display:flex;align-items:center;gap:14px}
+.logo{width:66px;height:66px;border-radius:16px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:grid;place-items:center;color:white;font-weight:800;box-shadow:var(--soft-shadow)}
+.title{font-size:18px;font-weight:700}
+.subtitle{font-size:13px;color:rgba(31,56,49,0.8)}
+.card{background:var(--panel);border-radius:var(--radius);padding:22px;box-shadow:var(--soft-shadow);border:var(--glass-border);backdrop-filter:blur(8px)}
+.hero{display:grid;grid-template-columns:1fr 420px;gap:28px;align-items:center;padding:28px;border-radius:28px}
+.h1{font-size:clamp(32px,5vw,56px);line-height:1.01;margin:0;font-weight:800}
+.lead{margin-top:12px;color:rgba(28,53,45,0.75);font-size:17px;max-width:62ch}
+.controls{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}
+.btn{padding:10px 14px;border-radius:12px;background:linear-gradient(180deg,rgba(255,255,255,0.85),rgba(255,255,255,0.7));border:1px solid rgba(0,0,0,0.04);cursor:pointer}
+.btn-cta{background:linear-gradient(90deg,var(--accent),var(--accent-2));color:white;font-weight:700}
+.aside{display:flex;flex-direction:column;gap:16px}
+.canvas{position:relative;border-radius:18px;overflow:hidden;height:420px}
+.parallaxLayer{position:absolute;inset:0}
+.particles{position:absolute;inset:0;pointer-events:none}
+.gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:22px}
+.gallery img{width:100%;height:180px;object-fit:cover;border-radius:12px;display:block}
+.footer{margin-top:24px;text-align:center;color:rgba(30,50,44,0.65);font-size:13px}
+.small{font-size:13px;color:rgba(30,50,44,0.7)}
+.note{font-size:13px;color:rgba(30,50,44,0.6);margin-top:12px}
+`;
+
+// Helper: gentle easing for animations
+const floatAnim = { y: [0, -6, 0], transition: { duration: 9, repeat: Infinity, ease: 'easeInOut' } };
+
+// Audio engine simplified (layers) — uses previous ideas but made resilient
+function useLayeredAudio() {
+  const ctxRef = useRef(null);
+  const gains = useRef({});
+  const sources = useRef({});
+
+  function ensure() {
+    if (ctxRef.current) return;
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    ctxRef.current = new AudioContext();
+  }
+
+  function makeGain(name, vol=0.12){ ensure(); const g = ctxRef.current.createGain(); g.gain.value = vol; g.connect(ctxRef.current.destination); gains.current[name]=g; return g; }
+
+  function createNoiseBuffer(type='pink', seconds=4){ const ctx=ctxRef.current; const len=seconds*ctx.sampleRate; const buf=ctx.createBuffer(1,len,ctx.sampleRate); const d=buf.getChannelData(0); if(type==='pink'){ let b0=0,b1=0,b2=0; for(let i=0;i<len;i++){ const w=Math.random()*2-1; b0=0.99886*b0+w*0.0555179; b1=0.99332*b1+w*0.0750759; b2=0.96900*b2+w*0.153852; d[i]=(b0+b1+b2+w*0.5362)*0.11 } } else { let last=0; for(let i=0;i<len;i++){ const w=Math.random()*2-1; last=(last+0.02*w)/1.02; d[i]=last*3.5 } } return buf; }
+
+  function play(name,type='pink',vol=0.12){ ensure(); const ctx=ctxRef.current; const src = ctx.createBufferSource(); src.buffer = createNoiseBuffer(type,5); src.loop = true; const g = gains.current[name] ?? makeGain(name,vol); src.connect(g); try{ src.start(); }catch(e){} sources.current[name]=src; }
+  function stop(name){ if(sources.current[name]){ try{ sources.current[name].stop(); }catch(e){} delete sources.current[name]; }}
+  function setVol(name,v){ if(gains.current[name]) gains.current[name].gain.linearRampToValueAtTime(v, ctxRef.current.currentTime+0.4); }
+  function resume(){ if(ctxRef.current && ctxRef.current.state==='suspended') ctxRef.current.resume(); }
+
+  return { play, stop, setVol, resume };
+}
+
+// Speech (with gentle defaults)
+function useGuideVoice(){ const synth = useRef(window.speechSynthesis || null);
+  function speak(text, opts={}){ if(!synth.current) return; const u=new SpeechSynthesisUtterance(text); u.lang=opts.lang||'es-ES'; u.rate=opts.rate||0.95; u.pitch=opts.pitch||1; u.volume=opts.volume||0.95; const voices=synth.current.getVoices(); if(voices.length) u.voice = voices.find(v=>/female|frau|mujer|sofia|lucia|ana|sara/i.test(v.name)) || voices[0]; synth.current.cancel(); synth.current.speak(u); }
+  function stop(){ synth.current?.cancel(); }
+  return { speak, stop };
+}
+
+export default function NatureRelaxDeep() {
+  const audio = useLayeredAudio();
+  const voice = useGuideVoice();
+  const [mode,setMode] = useState('respiracion');
+  const [len,setLen] = useState(6);
+  const [running,setRunning] = useState(false);
+  const [layers,setLayers] = useState({ lluvia:true, bosque:true, viento:false, cuenco:false });
+  const [vols,setVols] = useState({ lluvia:0.12, bosque:0.14, viento:0.06, cuenco:0.07 });
+  const [quoteIdx,setQuoteIdx] = useState(0);
+  const quotes = useMemo(()=>[
+    'Donde hay calma, florece la claridad.',
+    'Abre los sentidos sin prisa — la naturaleza no exige.',
+    'Un minuto bien vivido de presencia vale por horas de inquietud.'
+  ],[]);
+
+  useEffect(()=>{ const t=setInterval(()=>setQuoteIdx(i=> (i+1)%quotes.length),7000); return ()=>clearInterval(t); },[]);
+
+  useEffect(()=>{ if(!running) return; audio.resume(); if(layers.lluvia) audio.play('lluvia','pink',vols.lluvia); if(layers.bosque) audio.play('bosque','brown',vols.bosque); if(layers.viento) audio.play('viento','pink',vols.viento); if(layers.cuenco) audio.play('cuenco','brown',vols.cuenco); return ()=>{ audio.stop('lluvia'); audio.stop('bosque'); audio.stop('viento'); audio.stop('cuenco'); } },[running,layers]);
+  useEffect(()=>{ if(!running) return; Object.keys(vols).forEach(k=>audio.setVol && audio.setVol(k,vols[k])); },[vols]);
+
+  function toggleSession(){ if(running){ voice.stop(); setRunning(false); audio.stop('lluvia'); audio.stop('bosque'); audio.stop('viento'); audio.stop('cuenco'); } else { setRunning(true); audio.resume(); voice.speak(`Comenzamos una práctica de ${len} minutos. Encuentra una postura cómoda.`); setTimeout(()=> runTechnique(), 1400); } }
+
+  function runTechnique(){ if(mode==='respiracion') runBreath(); else if(mode==='escaneo') runScan(); else runPMR(); }
+
+  function runBreath(){ const pattern = { in:4, hold:2, out:6 }; const cycles = Math.max(8, Math.floor((len*60)/(pattern.in+pattern.hold+pattern.out))); let c=0; function step(){ if(!running) return; if(c>=cycles){ voice.speak('Finalizamos. Mantén la respiración natural.'); setRunning(false); return; } c++; voice.speak(`Inhala ${pattern.in} segundos`); setTimeout(()=>voice.speak(`Mantén ${pattern.hold} segundos`),(pattern.in)*1000); setTimeout(()=>voice.speak(`Exhala ${pattern.out} segundos`),(pattern.in+pattern.hold)*1000); setTimeout(step,(pattern.in+pattern.hold+pattern.out)*1000 + 80); } step(); }
+
+  function runScan(){ const steps = ['pies','piernas','abdomen y pecho','hombros y cuello','rostro y cuero cabelludo']; let i=0; function step(){ if(!running) return; if(i>=steps.length){ voice.speak('Termina con una respiración plena.'); setRunning(false); return; } voice.speak(`Lleva la atención a ${steps[i]}. Suelta la tensión que encuentres.`); i++; setTimeout(step,9000); } step(); }
+
+  function runPMR(){ const parts = ['pies','pantorrillas','muslos','abdomen','puños','hombros','rostro']; let i=0; function step(){ if(!running) return; if(i>=parts.length){ voice.speak('Suelta todo y respira con suavidad.'); setRunning(false); return; } voice.speak(`Tensa ${parts[i]} por unos segundos... ahora suelta.`); i++; setTimeout(step,8500); } step(); }
+
+  // Gallery — curated peaceful images (Unsplash placeholders)
+  const gallery = [
+    'https://images.unsplash.com/photo-1501785888041-af3ef285b470?w=1400&q=80&auto=format&fit=crop',
+    'https://images.unsplash.com/photo-1502082553048-f009c37129b9?w=1400&q=80&auto=format&fit=crop',
+    'https://images.unsplash.com/photo-1503264116251-35a269479413?w=1400&q=80&auto=format&fit=crop',
+    'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?w=1400&q=80&auto=format&fit=crop',
+    'https://images.unsplash.com/photo-1501785888041-af3ef285b470?w=1400&q=80&auto=format&fit=crop',
+    'https://images.unsplash.com/photo-1469474968028-56623f02e42e?w=1400&q=80&auto=format&fit=crop'
+  ];
+
+  return (
+    <div className="app">
+      <style>{styles}</style>
+      <div className="shell">
+        <header className="header">
+          <div className="brand">
+            <div className="logo">NR</div>
+            <div>
+              <div className="title">NatureRelax — Profundidad y belleza</div>
+              <div className="subtitle">Diseñado para inhalar calma y exhalar tensión</div>
+            </div>
+          </div>
+          <div className="small">Diseño intencional · Sin seguimiento</div>
+        </header>
+
+        <section className="hero card">
+          <div>
+            <h1 className="h1">Un refugio visual y sonoro para detenerte con belleza.</h1>
+            <p className="lead">Texturas sutiles, ritmos de respiración y paisajes que invitan al asombro. Todo integrado para que la experiencia sea estética y efectiva: cada elemento empuja hacia la calma.</p>
+
+            <div className="controls">
+              <div>
+                <label className="small" style={{marginRight:8}}>Técnica</label>
+                <select value={mode} onChange={e=>setMode(e.target.value)} className="btn">
+                  <option value="respiracion">Respiración profunda</option>
+                  <option value="escaneo">Escaneo corporal</option>
+                  <option value="pmr">Relajación muscular</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="small" style={{marginRight:8}}>Duración</label>
+                <select value={len} onChange={e=>setLen(parseInt(e.target.value))} className="btn">
+                  <option value={3}>3 min</option>
+                  <option value={6}>6 min</option>
+                  <option value={12}>12 min</option>
+                </select>
+              </div>
+
+              <button className="btn btn-cta" onClick={toggleSession}>{running ? 'Detener' : 'Iniciar sesión'}</button>
+
+              <div style={{marginLeft:12}} className="small">“{quotes[quoteIdx]}”</div>
+            </div>
+
+            <div className="gallery" aria-hidden>
+              {gallery.slice(0,3).map((src,i)=> <img key={i} src={src} alt="Paisaje sereno" />)}
+            </div>
+
+            <p className="note">Consejo: mira la imagen de la izquierda 20 segundos mientras respiras despacio — te ayuda a volver al presente.</p>
+          </div>
+
+          <aside className="aside">
+            <div className="canvas" aria-hidden>
+              <div className="parallaxLayer" style={{zIndex:1}}>
+                <motion.img src={gallery[3]} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} initial={{scale:1.06}} animate={{scale:1}} transition={{duration:16}} />
+              </div>
+              <div className="parallaxLayer" style={{zIndex:2}}>
+                <motion.div style={{position:'absolute',left:20,top:24}} animate={{y:[0,-8,0]}} transition={{duration:10,repeat:Infinity}}>
+                  <div className="card" style={{width:300,opacity:0.95}}>
+                    <div style={{fontWeight:700}}>Círculo de respiración</div>
+                    <div className="small" style={{marginTop:8}}>Sincroniza: inhala- mantén- exhala. Usa el botón para iniciar la guía hablada.</div>
+                  </div>
+                </motion.div>
+              </div>
+              <div className="particles" style={{zIndex:5}}>
+                <AnimatePresence>
+                  <motion.div initial={{opacity:0}} animate={{opacity:0.9}} exit={{opacity:0}} style={{position:'absolute',right:20,bottom:20}}>
+                    <div className="card" style={{width:220,backdropFilter:'blur(6px)'}}>Paisajes sonoros</div>
+                  </motion.div>
+                </AnimatePresence>
+              </div>
+            </div>
+
+            <div className="card">
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                <div>
+                  <div style={{fontWeight:700}}>Paisajes sonoros</div>
+                  <div className="small">Combina capas para crear una atmósfera que te envuelva sin abrumar.</div>
+                </div>
+                <div style={{display:'grid',gap:8}}>
+                  {['lluvia','bosque','viento','cuenco'].map(k=> (
+                    <label key={k} style={{display:'flex',alignItems:'center',gap:8}}>
+                      <input type="checkbox" checked={layers[k]} onChange={e=>setLayers(l=>({...l,[k]:e.target.checked}))} />
+                      <span className="small" style={{textTransform:'capitalize'}}>{k}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{marginTop:12}}>
+                {Object.keys(vols).map(k=> (
+                  <div key={k} style={{display:'flex',alignItems:'center',gap:8,marginTop:8}}>
+                    <div style={{flex:1,textTransform:'capitalize'}} className="small">{k}</div>
+                    <input type="range" min={0} max={0.3} step={0.01} value={vols[k]} onChange={e=>setVols(v=>({...v,[k]:parseFloat(e.target.value)}))} />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="card small">
+              <strong>Profundidad integrada</strong>
+              <p style={{marginTop:8}}>Cada sesión combina: anclaje sensorial, regulación respiratoria y reducción de la reactividad muscular. Todo presentado con imágenes y ritmo visual para sostener la atención sin esfuerzo.</p>
+            </div>
+          </aside>
+        </section>
+
+        <section style={{marginTop:22}} className="card">
+          <h3 style={{margin:0,fontSize:18}}>Galería para contemplar</h3>
+          <p className="small">Imágenes seleccionadas para sostener la calma. Perfectas para pausas de 20–60s.</p>
+          <div className="gallery" style={{marginTop:14}}>
+            {gallery.map((s,i)=> <img key={i} src={s} alt={`Paisaje ${i+1}`} />)}
+          </div>
+        </section>
+
+        <footer className="footer">Hecho con cuidado estético · Si quieres, exporto esto a un build listo para GitHub Pages.</footer>
+      </div>
+    </div>
+  );
+}
